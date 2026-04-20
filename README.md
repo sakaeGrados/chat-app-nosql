@@ -1,3 +1,10 @@
+## 👥 Integrantes 
+-112057 Franco Domínguez 
+-412258 Sakae Nakaganeku Grados
+-412695 brenda Gutierrez
+-106474 Gonzalo Mercado
+-407944 Alexis Joel Caiguara Ramírez
+
 # 💬 Chat App NoSQL - Sistema de Mensajería en Tiempo Real
 
 ## 📌 Descripción
