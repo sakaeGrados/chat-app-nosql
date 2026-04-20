@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App - Usuarios</title>
+    <link rel="stylesheet" href="../css/styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <button id="toggleSidebar" class="toggle-sidebar-btn" title="Contraer/Expandir">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <h2>Chat App</h2>
+            </div>
+            <ul class="sidebar-menu">
+                <li><a href="home.html" class="menu-item">🏠 Inicio</a></li>
+                <li><a href="global-chat.html" class="menu-item">💬 Chat Global</a></li>
+                <li><a href="private-chat.html" class="menu-item">👥 Chats Privados</a></li>
+                <li><a href="groups.html" class="menu-item">👥 Grupos</a></li>
+                <li><a href="usuarios.html" class="menu-item">👤 Usuarios</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <button id="sidebarUserBtn" class="sidebar-user-btn">
+                    <span id="sidebarUserInitials" class="user-photo">US</span>
+                </button>
+                <div id="sidebarUserDropdown" class="sidebar-user-dropdown">
+                    <a href="#" id="viewProfileLinkSidebar" class="dropdown-option">👤 Ver Perfil</a>
+                    <button id="statusDropdownBtn" class="dropdown-option">
+                        <span id="statusIndicator" class="status-indicator status-online"></span>
+                        <span id="statusText">Conectado</span>
+                    </button>
+                    <button id="logoutBtnSidebar" class="dropdown-option">🚪 Cerrar Sesión</button>
+                </div>
+            </div>
+        </nav>
+        <main class="main-content">
+            <div class="usuarios-container">
+                <div class="usuarios-header">
+                    <h2>👤 Usuarios</h2>
+                    <div class="search-bar">
+                        <input type="text" id="searchInput" placeholder="Buscar por nombre o teléfono..." class="search-input">
+                        <button id="clearSearch" class="btn-secondary" style="display: none;">Limpiar</button>
+                    </div>
+                </div>
+
+                <div class="usuarios-content">
+                    <div class="usuarios-tabs">
+                        <button class="tab-btn active" data-tab="todos">Todos</button>
+                        <button class="tab-btn" data-tab="amigos">Mis Amigos</button>
+                        <button class="tab-btn" data-tab="solicitudes">Solicitudes Recibidas <span id="requestBadge" class="badge" style="display: none;">0</span></button>
+                        <button class="tab-btn" data-tab="misSolicitudes">Mis Solicitudes <span id="sentBadge" class="badge" style="display: none;">0</span></button>
+                    </div>
+
+                    <div id="todos" class="usuarios-tab active">
+                        <div id="usuariosList" class="usuarios-list"></div>
+                    </div>
+
+                    <div id="amigos" class="usuarios-tab">
+                        <div id="amigosList" class="usuarios-list"></div>
+                    </div>
+
+                    <div id="solicitudes" class="usuarios-tab">
+                        <div id="solicitudesList" class="usuarios-list"></div>
+                    </div>
+
+                    <div id="misSolicitudes" class="usuarios-tab">
+                        <div id="misSolicitudesList" class="usuarios-list"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/ui.js"></script>
+    <script src="../js/sidebar.js"></script>
+    <script>
+        class UsuariosModule {
+            static allUsers = [];
+            static friends = [];
+            static friendRequests = [];
+            static sentRequests = [];
+            static currentTab = 'todos';
+            static connection = null;
+
+            static async init() {
+                Auth.init();
+                SidebarUI.init();
+                await this.setupSignalR();
+                // Cargar TODOS los datos primero
+                await this.loadAllUsers();
+                await this.loadFriends();
+                await this.loadFriendRequests();
+                await this.loadSentRequests();
+                // DESPUÉS mostrar la pantalla con estados correctos
+                this.updateRequestBadge();
+                this.updateSentBadge();
+                this.displayAllUsers();
+                this.displayFriends();
+                this.displayFriendRequests();
+                this.displaySentRequests();
+                this.setupEventListeners();
+                this.setupTabs();
+                
+                // Register this page as a listener for user data refresh
+                window.RefreshUserData = async () => {
+                    console.log('Refetching all users and friends...');
+                    await this.loadAllUsers();
+                    await this.loadFriends();
+                    await this.loadFriendRequests();
+                    await this.loadSentRequests();
+                    this.displayAllUsers();
+                    this.displayFriends();
+                    this.displayFriendRequests();
+                    this.displaySentRequests();
+                    this.updateRequestBadge();
+                    this.updateSentBadge();
+                };
+            }
+
+            static async setupSignalR() {
+                this.connection = new signalR.HubConnectionBuilder()
+                    .withUrl('http://localhost:5026/api/chat', {
+                        accessTokenFactory: () => API.token,
+                        withCredentials: true
+                    })
+                    .withAutomaticReconnect()
+                    .build();
+
+                this.connection.on('UserStatusChanged', (data) => {
+                    const userId = data?.userId || data?.UserId;
+                    const status = data?.status || data?.Status;
+                    if (!userId || !status) return;
+
+                    this.allUsers = this.allUsers.map(u =>
+                        u.id === userId ? { ...u, status } : u
+                    );
+                    this.friends = this.friends.map(u =>
+                        u.id === userId ? { ...u, status } : u
+                    );
+
+                    if (this.currentTab === 'todos') {
+                        this.displayAllUsers();
+                    } else if (this.currentTab === 'amigos') {
+                        this.displayFriends();
+                    }
+                });
+
+                try {
+                    await this.connection.start();
+                    const userId = Auth.getCurrentUserId();
+                    await this.connection.invoke('RegisterUser', userId);
+                    SidebarUI.registerStatusChangeListener(this.connection);
+                } catch (error) {
+                    console.error('Error conectando SignalR en Usuarios:', error);
+                }
+            }
+
+            static setupTabs() {
+                const tabBtns = document.querySelectorAll('.tab-btn');
+                tabBtns.forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        tabBtns.forEach(b => b.classList.remove('active'));
+                        e.target.classList.add('active');
+                        
+                        const tab = e.target.dataset.tab;
+                        this.currentTab = tab;
+                        
+                        document.querySelectorAll('.usuarios-tab').forEach(t => {
+                            t.classList.remove('active');
+                        });
+                        document.getElementById(tab).classList.add('active');
+                    });
+                });
+            }
+
+            static setupEventListeners() {
+                const searchInput = document.getElementById('searchInput');
+                const clearBtn = document.getElementById('clearSearch');
+
+                searchInput.addEventListener('input', (e) => {
+                    const query = e.target.value.trim();
+                    clearBtn.style.display = query ? 'inline-block' : 'none';
+                    this.filterUsuarios(query);
+                });
+
+                clearBtn.addEventListener('click', () => {
+                    searchInput.value = '';
+                    clearBtn.style.display = 'none';
+                    this.displayAllUsers();
+                });
+            }
+
+            static async loadAllUsers() {
+                try {
+                    this.allUsers = await API.getAllUsers(500);
+                } catch (error) {
+                    console.error('Error cargando usuarios:', error);
+                    UI.showError('Error al cargar usuarios');
+                }
+            }
+
+            static async loadFriends() {
+                try {
+                    this.friends = await API.getFriends();
+                    if (!this.friends) this.friends = [];
+                } catch (error) {
+                    console.error('Error cargando amigos:', error);
+                    this.friends = [];
+                }
+            }
+
+            static async loadFriendRequests() {
+                try {
+                    this.friendRequests = await API.getFriendRequests();
+                    if (!this.friendRequests) this.friendRequests = [];
+                } catch (error) {
+                    console.error('Error cargando solicitudes:', error);
+                    this.friendRequests = [];
+                }
+            }
+
+            static async loadSentRequests() {
+                try {
+                    this.sentRequests = await API.getSentFriendRequests();
+                    if (!this.sentRequests) this.sentRequests = [];
+                } catch (error) {
+                    console.error('Error cargando solicitudes enviadas:', error);
+                    this.sentRequests = [];
+                }
+            }
+
+            static updateRequestBadge() {
+                const badge = document.getElementById('requestBadge');
+                if (this.friendRequests.length > 0) {
+                    badge.textContent = this.friendRequests.length;
+                    badge.style.display = 'inline-block';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+
+            static updateSentBadge() {
+                const badge = document.getElementById('sentBadge');
+                if (this.sentRequests.length > 0) {
+                    badge.textContent = this.sentRequests.length;
+                    badge.style.display = 'inline-block';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+
+            static getRelationshipStatus(user) {
+                // Retorna: 'friend', 'pending', 'sent', o null
+                if (this.friends.some(f => f.id === user.id)) {
+                    return 'friend';
+                }
+                if (this.friendRequests.some(f => f.id === user.id)) {
+                    return 'pending'; // Solicitud recibida
+                }
+                if (this.sentRequests.some(f => f.id === user.id)) {
+                    return 'sent'; // Solicitud enviada
+                }
+                return null;
+            }
+
+            static displayAllUsers() {
+                const list = document.getElementById('usuariosList');
+                const currentUserId = Auth.getCurrentUserId();
+                
+                list.innerHTML = '';
+
+                if (this.allUsers.length === 0) {
+                    list.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">No hay usuarios disponibles</p>';
+                    return;
+                }
+
+                this.allUsers
+                    .filter(u => u.id !== currentUserId && !this.friends.some(f => f.id === u.id))
+                    .forEach(user => {
+                        const status = this.getRelationshipStatus(user);
+                        list.appendChild(this.createUserElement(user, status));
+                    });
+            }
+
+            static displayFriends() {
+                const list = document.getElementById('amigosList');
+                list.innerHTML = '';
+
+                if (this.friends.length === 0) {
+                    list.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">Aún no tienes amigos. ¡Agrega algunos!</p>';
+                    return;
+                }
+
+                this.friends.forEach(friend => {
+                    list.appendChild(this.createUserElement(friend, 'friend'));
+                });
+            }
+
+            static displayFriendRequests() {
+                const list = document.getElementById('solicitudesList');
+                list.innerHTML = '';
+
+                if (this.friendRequests.length === 0) {
+                    list.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">No hay solicitudes de amistad pendientes</p>';
+                    return;
+                }
+
+                this.friendRequests.forEach(request => {
+                    list.appendChild(this.createRequestElement(request));
+                });
+            }
+
+            static displaySentRequests() {
+                const list = document.getElementById('misSolicitudesList');
+                list.innerHTML = '';
+
+                if (this.sentRequests.length === 0) {
+                    list.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">No has enviado solicitudes de amistad pendientes</p>';
+                    return;
+                }
+
+                this.sentRequests.forEach(request => {
+                    list.appendChild(this.createSentRequestElement(request));
+                });
+            }
+
+            static createUserElement(user, status) {
+                const div = document.createElement('div');
+                div.className = 'usuario-item';
+
+                const statusMap = {
+                    online: { className: 'status-online', label: 'Conectado' },
+                    away: { className: 'status-away', label: 'Ausente' },
+                    dnd: { className: 'status-dnd', label: 'No molestar' },
+                    invisible: { className: 'status-offline', label: 'Invisible' },
+                    offline: { className: 'status-offline', label: 'Desconectado' }
+                };
+                
+                // Status null-safe: mostrar solo si existe
+                let presenceHTML = '';
+                if (user.status) {
+                    const presence = statusMap[user.status] || statusMap.online;
+                    presenceHTML = `<div class="usuario-presence"><span class="status-indicator ${presence.className}"></span>${presence.label}</div>`;
+                } else {
+                    presenceHTML = `<div class="usuario-presence"><span class="status-label" style="color: #999;">Privado</span></div>`;
+                }
+                
+                // Get initials for avatar
+                const initials = user.username
+                    .split(' ')
+                    .map(n => n[0])
+                    .join('')
+                    .toUpperCase()
+                    .slice(0, 2);
+                
+                // Build photo HTML
+                let photoHTML = '';
+                if (user.profilePhoto) {
+                    photoHTML = `<img src="${user.profilePhoto}" alt="Foto de ${user.username}" class="usuario-avatar-img">`;
+                } else {
+                    photoHTML = `<span class="usuario-avatar-initials">${initials}</span>`;
+                }
+                
+                let actionButton = '';
+                if (status === 'friend') {
+                    actionButton = `<button class="btn-secondary btn-small remove-friend" data-user-id="${user.id}">➖ Eliminar</button>`;
+                } else if (status === 'pending') {
+                    actionButton = `<button class="btn-warning btn-small" disabled>⏳ Solicitud Recibida</button>`;
+                } else if (status === 'sent') {
+                    actionButton = `<button class="btn-warning btn-small" disabled>⏱️ Solicitud Enviada</button>`;
+                } else {
+                    actionButton = `<button class="btn-primary btn-small add-friend" data-user-id="${user.id}">➕ Agregar</button>`;
+                }
+
+                div.innerHTML = `
+                    <div class="usuario-avatar">
+                        ${photoHTML}
+                    </div>
+                    <div class="usuario-info">
+                        <div class="usuario-name">${user.username}</div>
+                        <div class="usuario-phone">${user.phoneNumber || 'Sin teléfono'}</div>
+                        ${presenceHTML}
+                    </div>
+                    <div class="usuario-actions">
+                        ${actionButton}
+                        ${status === 'friend' ? `<button class="btn-primary btn-small chat-button" data-user-id="${user.id}" data-username="${user.username}">💬 Chat</button>` : ''}
+                    </div>
+                `;
+
+                const addBtn = div.querySelector('.add-friend');
+                if (addBtn) {
+                    addBtn.addEventListener('click', () => this.addFriend(user.id));
+                }
+
+                const removeBtn = div.querySelector('.remove-friend');
+                if (removeBtn) {
+                    removeBtn.addEventListener('click', () => this.removeFriend(user.id));
+                }
+
+                const chatBtn = div.querySelector('.chat-button');
+                if (chatBtn) {
+                    chatBtn.addEventListener('click', () => {
+                        localStorage.setItem('selectedUserId', user.id);
+                        localStorage.setItem('selectedUserName', user.username);
+                        window.location.href = 'private-chat.html';
+                    });
+                }
+
+                return div;
+            }
+
+            static createRequestElement(request) {
+                const div = document.createElement('div');
+                div.className = 'usuario-item';
+                
+                // Get initials for avatar
+                const initials = request.username
+                    .split(' ')
+                    .map(n => n[0])
+                    .join('')
+                    .toUpperCase()
+                    .slice(0, 2);
+                
+                // Build photo HTML
+                let photoHTML = '';
+                if (request.profilePhoto) {
+                    photoHTML = `<img src="${request.profilePhoto}" alt="Foto de ${request.username}" class="usuario-avatar-img">`;
+                } else {
+                    photoHTML = `<span class="usuario-avatar-initials">${initials}</span>`;
+                }
+                
+                div.innerHTML = `
+                    <div class="usuario-avatar">
+                        ${photoHTML}
+                    </div>
+                    <div class="usuario-info">
+                        <div class="usuario-name">${request.username}</div>
+                        <div class="usuario-phone">${request.phoneNumber || 'Sin teléfono'}</div>
+                    </div>
+                    <div class="usuario-actions">
+                        <button class="btn-success btn-small accept-request" data-user-id="${request.id}">✅ Aceptar</button>
+                        <button class="btn-secondary btn-small reject-request" data-user-id="${request.id}">❌ Rechazar</button>
+                    </div>
+                `;
+
+                const acceptBtn = div.querySelector('.accept-request');
+                const rejectBtn = div.querySelector('.reject-request');
+
+                acceptBtn.addEventListener('click', () => this.acceptRequest(request.id));
+                rejectBtn.addEventListener('click', () => this.rejectRequest(request.id));
+
+                return div;
+            }
+
+            static createSentRequestElement(request) {
+                const div = document.createElement('div');
+                div.className = 'usuario-item';
+                
+                // Get initials for avatar
+                const initials = request.username
+                    .split(' ')
+                    .map(n => n[0])
+                    .join('')
+                    .toUpperCase()
+                    .slice(0, 2);
+                
+                // Build photo HTML
+                let photoHTML = '';
+                if (request.profilePhoto) {
+                    photoHTML = `<img src="${request.profilePhoto}" alt="Foto de ${request.username}" class="usuario-avatar-img">`;
+                } else {
+                    photoHTML = `<span class="usuario-avatar-initials">${initials}</span>`;
+                }
+                
+                div.innerHTML = `
+                    <div class="usuario-avatar">
+                        ${photoHTML}
+                    </div>
+                    <div class="usuario-info">
+                        <div class="usuario-name">${request.username}</div>
+                        <div class="usuario-phone">${request.phoneNumber || 'Sin teléfono'}</div>
+                    </div>
+                    <div class="usuario-actions">
+                        <button class="btn-secondary btn-small cancel-request" data-user-id="${request.id}">❌ Cancelar</button>
+                    </div>
+                `;
+
+                const cancelBtn = div.querySelector('.cancel-request');
+                cancelBtn.addEventListener('click', () => this.cancelFriendRequest(request.id));
+
+                return div;
+            }
+
+            static async addFriend(userId) {
+                try {
+                    await API.addFriend(userId);
+                    await this.loadFriends();
+                    await this.loadSentRequests();
+                    await this.loadAllUsers();
+                    // Re-render según la pestaña actual
+                    if (this.currentTab === 'todos') {
+                        this.displayAllUsers();
+                    } else if (this.currentTab === 'amigos') {
+                        this.displayFriends();
+                    }
+                    UI.showSuccess('¡Solicitud de amistad enviada!');
+                } catch (error) {
+                    console.error('Error:', error);
+                    UI.showError('Error al enviar solicitud: ' + error.message);
+                }
+            }
+
+            static async removeFriend(userId) {
+                try {
+                    await API.removeFriend(userId);
+                    await this.loadFriends();
+                    await this.loadAllUsers();
+                    // Re-render según la pestaña actual
+                    if (this.currentTab === 'todos') {
+                        this.displayAllUsers();
+                    } else if (this.currentTab === 'amigos') {
+                        this.displayFriends();
+                    }
+                    UI.showSuccess('¡Amigo eliminado!');
+                } catch (error) {
+                    console.error('Error:', error);
+                    UI.showError('Error al eliminar amigo: ' + error.message);
+                }
+            }
+
+            static async acceptRequest(userId) {
+                try {
+                    await API.acceptFriendRequest(userId);
+                    await this.loadFriends();
+                    await this.loadFriendRequests();
+                    await this.loadAllUsers();
+                    // Re-render según la pestaña actual
+                    if (this.currentTab === 'todos') {
+                        this.displayAllUsers();
+                    } else if (this.currentTab === 'amigos') {
+                        this.displayFriends();
+                    } else if (this.currentTab === 'solicitudes') {
+                        this.displayFriendRequests();
+                    }
+                    this.updateRequestBadge();
+                    UI.showSuccess('¡Solicitud aceptada!');
+                } catch (error) {
+                    console.error('Error:', error);
+                    UI.showError('Error al aceptar solicitud: ' + error.message);
+                }
+            }
+
+            static async rejectRequest(userId) {
+                try {
+                    await API.rejectFriendRequest(userId);
+                    await this.loadFriendRequests();
+                    await this.loadAllUsers();
+                    // Re-render según la pestaña actual
+                    if (this.currentTab === 'todos') {
+                        this.displayAllUsers();
+                    } else if (this.currentTab === 'solicitudes') {
+                        this.displayFriendRequests();
+                    }
+                    this.updateRequestBadge();
+                    UI.showSuccess('¡Solicitud rechazada!');
+                } catch (error) {
+                    console.error('Error:', error);
+                    UI.showError('Error al rechazar solicitud: ' + error.message);
+                }
+            }
+
+            static async cancelFriendRequest(userId) {
+                try {
+                    await API.cancelFriendRequest(userId);
+                    await this.loadSentRequests();
+                    await this.loadAllUsers();
+                    // Re-render según la pestaña actual
+                    if (this.currentTab === 'todos') {
+                        this.displayAllUsers();
+                    } else if (this.currentTab === 'misSolicitudes') {
+                        this.displaySentRequests();
+                    }
+                    this.updateSentBadge();
+                    UI.showSuccess('¡Solicitud cancelada!');
+                } catch (error) {
+                    console.error('Error:', error);
+                    UI.showError('Error al cancelar solicitud: ' + error.message);
+                }
+            }
+
+            static filterUsuarios(query) {
+                if (!query) {
+                    this.displayAllUsers();
+                    return;
+                }
+
+                // Use API search to find users (includes offline users)
+                this.searchUsersAPI(query);
+            }
+
+            static async searchUsersAPI(query) {
+                try {
+                    const results = await API.searchUsers(query);
+                    if (!results || results.length === 0) {
+                        const list = document.getElementById('usuariosList');
+                        list.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">No se encontraron usuarios</p>';
+                        return;
+                    }
+
+                    const list = document.getElementById('usuariosList');
+                    const currentUserId = Auth.getCurrentUserId();
+                    
+                    list.innerHTML = '';
+                    results
+                        .filter(u => u.id !== currentUserId)
+                        .forEach(user => {
+                            const status = this.getRelationshipStatus(user);
+                            list.appendChild(this.createUserElement(user, status));
+                        });
+                } catch (error) {
+                    console.error('Error en búsqueda:', error);
+                    UI.showError('Error al buscar usuarios');
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            UsuariosModule.init();
+        });
+    </script>
+    <style>
+        .usuarios-container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .usuarios-header {
+            padding: 20px;
+            border-bottom: 1px solid #ddd;
+            background: #f9f9f9;
+        }
+
+        .usuarios-header h2 {
+            margin: 0 0 15px 0;
+            color: #333;
+        }
+
+        .usuario-presence {
+            margin-top: 6px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: #666;
+            font-size: 12px;
+        }
+
+        .search-bar {
+            display: flex;
+            gap: 10px;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 5px rgba(102, 126, 234, 0.3);
+        }
+
+        .usuarios-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .usuarios-tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid #ddd;
+            background: white;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            background: #f5f5f5;
+            cursor: pointer;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.2s;
+            border-bottom: 3px solid transparent;
+        }
+
+        .tab-btn:hover {
+            background: #efefef;
+        }
+
+        .tab-btn.active {
+            background: white;
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .usuarios-tab {
+            display: none;
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #fafafa;
+        }
+
+        .usuarios-tab.active {
+            display: block;
+        }
+
+        .usuarios-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .usuario-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .usuario-item:hover {
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .usuario-info {
+            flex: 1;
+        }
+
+        .usuario-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .usuario-phone {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .usuario-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-small {
+            padding: 8px 12px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+    </style>
+</body>
+</html>

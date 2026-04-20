@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App - Chat Global</title>
+    <link rel="stylesheet" href="../css/styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <button id="toggleSidebar" class="toggle-sidebar-btn" title="Contraer/Expandir">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <h2>Chat App</h2>
+            </div>
+            <ul class="sidebar-menu">
+                <li><a href="home.html" class="menu-item">🏠 Inicio</a></li>
+                <li><a href="global-chat.html" class="menu-item">💬 Chat Global</a></li>
+                <li><a href="private-chat.html" class="menu-item">👥 Chats Privados</a></li>
+                <li><a href="groups.html" class="menu-item">👥 Grupos</a></li>
+                <li><a href="usuarios.html" class="menu-item">👤 Usuarios</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <button id="sidebarUserBtn" class="sidebar-user-btn">
+                    <span id="sidebarUserInitials" class="user-photo">US</span>
+                </button>
+                <div id="sidebarUserDropdown" class="sidebar-user-dropdown">
+                    <a href="#" id="viewProfileLinkSidebar" class="dropdown-option">👤 Ver Perfil</a>
+                    <button id="statusDropdownBtn" class="dropdown-option">
+                        <span id="statusIndicator" class="status-indicator status-online"></span>
+                        <span id="statusText">Conectado</span>
+                    </button>
+                    <button id="logoutBtnSidebar" class="dropdown-option">🚪 Cerrar Sesión</button>
+                </div>
+            </div>
+        </nav>
+        <main class="main-content">
+            <div class="chat-container">
+                <div class="chat-header">
+                    <h2>💬 Chat Global</h2>
+                    <div id="connectionStatus" class="status disconnected">Desconectado</div>
+                </div>
+                <div id="messagesList" class="messages-list"></div>
+                <div class="chat-input-area">
+                    <textarea id="messageInput" placeholder="Escribe tu mensaje..." rows="3"></textarea>
+                    <button id="sendBtn" class="btn-primary">Enviar</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/ui.js"></script>
+    <script src="../js/sidebar.js"></script>
+    <script>
+        class GlobalChat {
+            static connection = null;
+
+            static async init() {
+                Auth.init();
+                SidebarUI.init();
+                await this.setupSignalR();
+                await this.loadMessages();
+                this.setupEventListeners();
+                
+                // Register this page as a listener for user data refresh
+                window.RefreshUserData = async () => {
+                    console.log('Refreshing global chat...');
+                    // Global chat mainly displays messages, no need to refresh much here
+                };
+            }
+
+            static async setupSignalR() {
+                this.connection = new signalR.HubConnectionBuilder()
+                    .withUrl('http://localhost:5026/api/chat', {
+                        accessTokenFactory: () => API.token,
+                        withCredentials: true
+                    })
+                    .withAutomaticReconnect()
+                    .build();
+
+                this.connection.on('ReceiveGlobalMessage', (message) => {
+                    // Comparar userId para determinar si es enviado o recibido
+                    const isOwn = message.userId === Auth.getCurrentUserId();
+                    const type = isOwn ? 'sent' : 'received';
+                    this.displayMessage(message.username, message.content, type, message.timestamp);
+                });
+
+                try {
+                    await this.connection.start();
+                    const statusEl = document.getElementById('connectionStatus');
+                    if (statusEl) {
+                        statusEl.className = 'status connected';
+                        statusEl.textContent = '✅ Conectado';
+                    }
+
+                    // Registrar usuario
+                    const userId = Auth.getCurrentUserId();
+                    await this.connection.invoke('RegisterUser', userId);
+                    
+                    // Registrar listener para cambios de estado
+                    SidebarUI.registerStatusChangeListener(this.connection);
+                } catch (err) {
+                    console.error('Error conectando SignalR:', err);
+                    const statusEl = document.getElementById('connectionStatus');
+                    if (statusEl) {
+                        statusEl.textContent = '❌ Error conexión';
+                    }
+                }
+            }
+
+            static setupEventListeners() {
+                const sendBtn = document.getElementById('sendBtn');
+                const messageInput = document.getElementById('messageInput');
+                
+                if (sendBtn) {
+                    sendBtn.addEventListener('click', () => {
+                        this.sendMessage();
+                    });
+                }
+
+                if (messageInput) {
+                    messageInput.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            this.sendMessage();
+                        }
+                    });
+                }
+
+                const logoutBtn = document.getElementById('logoutBtn');
+                if (logoutBtn) {
+                    logoutBtn.addEventListener('click', () => {
+                        Auth.logout();
+                    });
+                }
+            }
+
+            static async sendMessage() {
+                const input = document.getElementById('messageInput');
+                if (!input) return;
+                
+                const content = input.value.trim();
+
+                if (!content) {
+                    return;
+                }
+
+                try {
+                    await API.sendGlobalMessage(content);
+                    input.value = '';
+                    // El mensaje se mostrará cuando llegue por SignalR (ReceiveGlobalMessage)
+                } catch (error) {
+                    UI.showError(error.message);
+                }
+            }
+
+            static formatTime(timestamp) {
+                if (!timestamp) return '';
+                const date = new Date(timestamp);
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${hours}:${minutes}`;
+            }
+
+            static async loadMessages() {
+                try {
+                    const messages = await API.getGlobalMessages(50);
+                    const list = document.getElementById('messagesList');
+                    if (!list) return;
+                    
+                    list.innerHTML = '';
+                    const currentUserId = Auth.getCurrentUserId();
+
+                    // Invertir orden para mostrar mensajes antiguos primero (arriba) y nuevos al final (abajo)
+                    const sortedMessages = messages.slice().reverse();
+
+                    sortedMessages.forEach(msg => {
+                        // Comparar userId (del API DTO) con el ID del usuario autenticado
+                        const type = msg.userId === currentUserId ? 'sent' : 'received';
+                        this.displayMessage(msg.username, msg.content, type, msg.timestamp);
+                    });
+                } catch (error) {
+                    UI.showError(error.message);
+                }
+            }
+
+            static displayMessage(user, content, type, timestamp) {
+                const list = document.getElementById('messagesList');
+                if (!list) return;
+                
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message message-${type} message-global`;
+                const time = this.formatTime(timestamp);
+                messageDiv.innerHTML = `
+                    <div class="message-user">${user}</div>
+                    <div class="message-content">${content}</div>
+                    <div class="message-time">${time}</div>
+                `;
+                list.appendChild(messageDiv);
+                list.scrollTop = list.scrollHeight;
+            }
+
+            static async destroy() {
+                if (this.connection) {
+                    await this.connection.stop();
+                }
+            }
+        }
+
+        // Inicializar cuando el DOM esté listo
+        document.addEventListener('DOMContentLoaded', () => {
+            GlobalChat.init();
+        });
+
+        // Limpiar al cerrar la página
+        window.addEventListener('beforeunload', () => {
+            GlobalChat.destroy();
+        });
+    </script>
+</body>
+</html>

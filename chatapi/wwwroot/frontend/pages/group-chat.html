@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App - Grupo</title>
+    <link rel="stylesheet" href="../css/styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <button id="toggleSidebar" class="toggle-sidebar-btn" title="Contraer/Expandir">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <h2>Chat App</h2>
+            </div>
+            <ul class="sidebar-menu">
+                <li><a href="home.html" class="menu-item">🏠 Inicio</a></li>
+                <li><a href="global-chat.html" class="menu-item">💬 Chat Global</a></li>
+                <li><a href="private-chat.html" class="menu-item">👥 Chats Privados</a></li>
+                <li><a href="groups.html" class="menu-item">👥 Grupos</a></li>
+                <li><a href="usuarios.html" class="menu-item">👤 Usuarios</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <button id="sidebarUserBtn" class="sidebar-user-btn">
+                    <span id="sidebarUserInitials" class="user-photo">US</span>
+                </button>
+                <div id="sidebarUserDropdown" class="sidebar-user-dropdown">
+                    <a href="#" id="viewProfileLinkSidebar" class="dropdown-option">👤 Ver Perfil</a>
+                    <button id="statusDropdownBtn" class="dropdown-option">
+                        <span id="statusIndicator" class="status-indicator status-online"></span>
+                        <span id="statusText">Conectado</span>
+                    </button>
+                    <button id="logoutBtnSidebar" class="dropdown-option">🚪 Cerrar Sesión</button>
+                </div>
+            </div>
+        </nav>
+        <main class="main-content">
+            <div class="chat-container">
+                <div class="chat-header">
+                    <div>
+                        <h2 id="groupName">Grupo</h2>
+                        <small id="groupMembers" style="color: #999;"></small>
+                    </div>
+                </div>
+                <div id="messagesList" class="messages-list"></div>
+                <div class="chat-input-area">
+                    <textarea id="messageInput" placeholder="Escribe tu mensaje..." rows="3"></textarea>
+                    <button id="sendBtn" class="btn-primary">Enviar</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/ui.js"></script>
+    <script src="../js/sidebar.js"></script>
+    <script>
+        class GroupChat {
+            static connection = null;
+            static groupId = null;
+            static displayedMessageIds = new Set(); // Track displayed message IDs to prevent duplicates
+
+            static async init() {
+                Auth.init();
+                SidebarUI.init();
+                this.groupId = this.getGroupIdFromURL();
+                
+                if (!this.groupId) {
+                    UI.showError('ID de grupo no especificado');
+                    setTimeout(() => window.location.href = 'groups.html', 2000);
+                    return;
+                }
+
+                await this.setupSignalR();
+                await this.loadGroupInfo();
+                await this.loadMessages();
+                this.setupEventListeners();
+            }
+
+            static getGroupIdFromURL() {
+                const params = new URLSearchParams(window.location.search);
+                return params.get('groupId');
+            }
+
+            static async setupSignalR() {
+                this.connection = new signalR.HubConnectionBuilder()
+                    .withUrl('http://localhost:5026/api/chat', {
+                        accessTokenFactory: () => API.token,
+                        withCredentials: true
+                    })
+                    .withAutomaticReconnect()
+                    .build();
+
+                this.connection.on('ReceiveGroupMessage', (message) => {
+                    if (message.groupId === this.groupId) {
+                        // Comparar UserId para determinar si es enviado o recibido
+                        const isOwn = message.userId === Auth.getCurrentUserId();
+                        const type = isOwn ? 'sent' : 'received';
+                        this.displayMessage(message.username, message.content, type, message.timestamp, message.id);
+                    }
+                });
+
+                this.connection.on('UserTypingGroup', (data) => {
+                    if (data.groupId === this.groupId) {
+                        this.showTypingIndicator(data.senderName);
+                    }
+                });
+
+                this.connection.on('UserJoinedGroup', (data) => {
+                    if (data.groupId === this.groupId) {
+                        UI.showInfo(`${data.username} se unió al grupo`);
+                        this.refreshGroupMembers();
+                    }
+                });
+
+                this.connection.on('UserLeftGroup', (data) => {
+                    if (data.groupId === this.groupId) {
+                        UI.showInfo(`${data.username} salió del grupo`);
+                        this.refreshGroupMembers();
+                    }
+                });
+
+                try {
+                    await this.connection.start();
+
+                    const userId = Auth.getCurrentUserId();
+                    await this.connection.invoke('RegisterUser', userId);
+                    await this.connection.invoke('JoinGroupChat', this.groupId, userId);
+                    
+                    // Registrar listener para cambios de estado
+                    SidebarUI.registerStatusChangeListener(this.connection);
+                } catch (err) {
+                    console.error('Error conectando SignalR:', err);
+                }
+            }
+
+            static async loadGroupInfo() {
+                try {
+                    const group = await API.getGroup(this.groupId);
+                    const members = await API.getGroupMembers(this.groupId);
+                    const memberNames = members.map(m => m.username).join(', ');
+                    
+                    document.getElementById('groupName').textContent = group.name || 'Grupo';
+                    document.getElementById('groupMembers').textContent = `👥 ${memberNames || 'Sin miembros'}`;
+                } catch (error) {
+                    console.error('Error cargando información del grupo:', error);
+                }
+            }
+
+            static async refreshGroupMembers() {
+                await this.loadGroupInfo();
+            }
+            static loadAndDisplayUserInitials(userId) {
+                try {
+                    // Get username from localStorage or create from userId
+                    const username = localStorage.getItem('username') || userId?.substring(0, 2).toUpperCase() || 'US';
+                    const initials = this.getInitials(username);
+                    
+                    const userInitialsElems = document.querySelectorAll('[id*="Initials"]');
+                    userInitialsElems.forEach(elem => {
+                        elem.textContent = initials;
+                    });
+                } catch (error) {
+                    console.error('Error displaying user initials:', error);
+                }
+            }
+
+            static getInitials(username) {
+                if (!username) return 'US';
+                const parts = username.trim().split(' ');
+                if (parts.length >= 2) {
+                    return (parts[0][0] + parts[1][0]).toUpperCase();
+                }
+                return username.substring(0, 2).toUpperCase();
+            }
+            static setupEventListeners() {
+                // Get user info and display initials
+                const userId = Auth.getCurrentUserId();
+                this.loadAndDisplayUserInitials(userId);
+
+                document.getElementById('sendBtn').addEventListener('click', () => {
+                    this.sendMessage();
+                });
+
+                document.getElementById('messageInput').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+
+                // Menu desplegable del header
+                const userMenuBtn = document.getElementById('userMenuBtn');
+                const userMenu = document.getElementById('userMenu');
+                const viewProfileBtn = document.getElementById('viewProfileBtn');
+
+                userMenuBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    userMenu.classList.toggle('open');
+                });
+
+                viewProfileBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    UI.showInfo('Función de perfil en desarrollo');
+                });
+
+                // Cerrar menu al hacer click fuera
+                document.addEventListener('click', (e) => {
+                    if (!userMenuBtn.contains(e.target) && !userMenu.contains(e.target)) {
+                        userMenu.classList.remove('open');
+                    }
+                });
+
+                // Notificar que está escribiendo
+                let typingTimeout;
+                document.getElementById('messageInput').addEventListener('input', () => {
+                    clearTimeout(typingTimeout);
+                    if (this.connection && this.groupId) {
+                        this.connection.invoke('NotifyTypingGroup', this.groupId).catch(console.error);
+                    }
+                    typingTimeout = setTimeout(() => {}, 3000);
+                });
+            }
+
+            static async sendMessage() {
+                const input = document.getElementById('messageInput');
+                const content = input.value.trim();
+
+                if (!content) {
+                    UI.showError('El mensaje no puede estar vacío');
+                    return;
+                }
+
+                try {
+                    await API.sendGroupMessage(this.groupId, content);
+                    input.value = '';
+                    // El mensaje se mostrará cuando llegue por SignalR (ReceiveGroupMessage)
+                } catch (error) {
+                    UI.showError('Error al enviar mensaje: ' + error.message);
+                }
+            }
+
+            static formatTime(timestamp) {
+                if (!timestamp) return '';
+                const date = new Date(timestamp);
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${hours}:${minutes}`;
+            }
+
+            static async loadMessages() {
+                try {
+                    const messages = await API.getGroupMessages(this.groupId, 50);
+                    const list = document.getElementById('messagesList');
+                    list.innerHTML = '';
+                    const currentUserId = Auth.getCurrentUserId();
+
+                    if (messages && messages.length > 0) {
+                        // Invertir orden para mostrar mensajes antiguos primero (arriba) y nuevos al final (abajo)
+                        const sortedMessages = messages.slice().reverse();
+
+                        sortedMessages.forEach(msg => {
+                            // Comparar userId para determinar si es enviado o recibido
+                            const type = msg.userId === currentUserId ? 'sent' : 'received';
+                            this.displayMessage(msg.username, msg.content, type, msg.timestamp, msg.id);
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error cargando mensajes:', error);
+                }
+            }
+
+            static displayMessage(user, content, type, timestamp, messageId) {
+                // Prevent displaying duplicate messages
+                if (messageId && this.displayedMessageIds.has(messageId)) {
+                    return;
+                }
+                if (messageId) {
+                    this.displayedMessageIds.add(messageId);
+                }
+
+                const list = document.getElementById('messagesList');
+                const messageDiv = document.createElement('div');
+                const time = this.formatTime(timestamp);
+                messageDiv.className = `message message-${type} message-group`;
+                messageDiv.innerHTML = `
+                    <div class="message-user">${user}</div>
+                    <div class="message-content">${content}</div>
+                    <div class="message-time">${time}</div>
+                `;
+                list.appendChild(messageDiv);
+                list.scrollTop = list.scrollHeight;
+            }
+
+            static showTypingIndicator(username) {
+                const messages = document.getElementById('messagesList');
+                const existing = messages.querySelector('.typing-indicator');
+                if (existing) existing.remove();
+
+                const typingDiv = document.createElement('div');
+                typingDiv.className = 'typing-indicator';
+                typingDiv.innerHTML = `<em>${username} está escribiendo...</em>`;
+                typingDiv.style.cssText = `
+                    color: #999;
+                    font-size: 12px;
+                    padding: 10px;
+                    text-align: center;
+                `;
+                messages.appendChild(typingDiv);
+
+                setTimeout(() => typingDiv.remove(), 3000);
+            }
+
+            static async destroy() {
+                if (this.connection) {
+                    await this.connection.stop();
+                }
+            }
+        }
+
+        // Inicializar cuando el DOM esté listo
+        document.addEventListener('DOMContentLoaded', () => {
+            GroupChat.init();
+        });
+
+        // Limpiar al cerrar la página
+        window.addEventListener('beforeunload', () => {
+            GroupChat.destroy();
+        });
+    </script>
+</body>
+</html>

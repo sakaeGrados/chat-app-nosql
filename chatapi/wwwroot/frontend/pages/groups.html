@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App - Grupos</title>
+    <link rel="stylesheet" href="../css/styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <button id="toggleSidebar" class="toggle-sidebar-btn" title="Contraer/Expandir">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <h2>Chat App</h2>
+            </div>
+            <ul class="sidebar-menu">
+                <li><a href="home.html" class="menu-item">🏠 Inicio</a></li>
+                <li><a href="global-chat.html" class="menu-item">💬 Chat Global</a></li>
+                <li><a href="private-chat.html" class="menu-item">👥 Chats Privados</a></li>
+                <li><a href="groups.html" class="menu-item">👥 Grupos</a></li>
+                <li><a href="usuarios.html" class="menu-item">👤 Usuarios</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <button id="sidebarUserBtn" class="sidebar-user-btn">
+                    <span id="sidebarUserInitials" class="user-photo">US</span>
+                </button>
+                <div id="sidebarUserDropdown" class="sidebar-user-dropdown">
+                    <a href="#" id="viewProfileLinkSidebar" class="dropdown-option">👤 Ver Perfil</a>
+                    <button id="statusDropdownBtn" class="dropdown-option">
+                        <span id="statusIndicator" class="status-indicator status-online"></span>
+                        <span id="statusText">Conectado</span>
+                    </button>
+                    <button id="logoutBtnSidebar" class="dropdown-option">🚪 Cerrar Sesión</button>
+                </div>
+            </div>
+        </nav>
+        <main class="main-content">
+            <div class="chat-wrapper">
+                <!-- Panel de grupos (lado izquierdo) -->
+                <div class="groups-panel" id="groupsPanel">
+                    <div class="groups-panel-header">
+                        <h3>Mis Grupos</h3>
+                        <button id="createGroupBtn" class="btn-primary" style="width: auto; padding: 0.4rem 0.8rem; font-size: 0.85rem;">➕</button>
+                    </div>
+                    <div class="groups-panel-search">
+                        <input type="text" id="searchGroupInput" placeholder="🔍 Buscar grupos...">
+                    </div>
+                    <div class="groups-panel-list" id="groupsList">
+                        <div class="empty-state">Cargando grupos...</div>
+                    </div>
+                </div>
+
+                <!-- Panel de chat del grupo (lado derecho) -->
+                <div class="chat-panel" id="groupChatPanel">
+                    <div class="chat-container">
+                        <div class="chat-header">
+                            <h2 id="groupChatTitle">Selecciona un grupo para comenzar</h2>
+                        </div>
+                        <div id="groupMessagesList" class="messages-list"></div>
+                        <div class="chat-input-area">
+                            <textarea id="groupMessageInput" placeholder="Escribe tu mensaje..." rows="3"></textarea>
+                            <button id="groupSendBtn" class="btn-primary">Enviar</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/ui.js"></script>
+    <script src="../js/sidebar.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+    <script>
+        class GroupsChat {
+            static connection = null;
+            static currentGroupId = null;
+            static currentGroupName = null;
+            static myGroups = [];
+
+            static async init() {
+                Auth.init();
+                await this.setupSignalR();
+                await this.loadMyGroups();
+                this.setupEventListeners();
+                SidebarUI.init();
+            }
+
+            static async setupSignalR() {
+                this.connection = new signalR.HubConnectionBuilder()
+                    .withUrl('http://localhost:5026/api/chat', {
+                        accessTokenFactory: () => API.token,
+                        withCredentials: true
+                    })
+                    .withAutomaticReconnect()
+                    .build();
+
+                this.connection.on('ReceiveGroupMessage', (message) => {
+                    if (message.groupId === this.currentGroupId) {
+                        const type = message.senderId === Auth.getCurrentUserId() ? 'sent' : 'received';
+                        this.displayMessage(message.senderUsername || '?', message.content, type, message.timestamp);
+                    }
+                });
+
+                try {
+                    await this.connection.start();
+                    const userId = Auth.getCurrentUserId();
+                    await this.connection.invoke('RegisterUser', userId);
+                } catch (err) {
+                    console.error('Error conectando SignalR:', err);
+                }
+            }
+
+            static async loadMyGroups() {
+                try {
+                    this.myGroups = await API.getMyGroups() || [];
+                    this.renderGroupsList(this.myGroups);
+                } catch (error) {
+                    console.error('Error cargando grupos:', error);
+                    this.renderGroupsList([]);
+                }
+            }
+
+            static renderGroupsList(groups) {
+                const list = document.getElementById('groupsList');
+                
+                if (!groups || groups.length === 0) {
+                    list.innerHTML = '<div class="empty-state">No tienes grupos aún</div>';
+                    return;
+                }
+
+                list.innerHTML = groups.map(group => `
+                    <div class="group-list-item ${group.id === this.currentGroupId ? 'active' : ''}" onclick="GroupsChat.selectGroup('${group.id}', '${group.name}')">
+                        <div style="font-size: 1.5rem;">👥</div>
+                        <div class="conversation-info">
+                            <div class="group-list-item-name">${group.name}</div>
+                            <div class="conversation-status">${group.memberCount || 0} miembros</div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            static selectGroup(groupId, groupName) {
+                this.currentGroupId = groupId;
+                this.currentGroupName = groupName;
+                
+                // Marcar como activo
+                document.querySelectorAll('.group-list-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                event.currentTarget?.classList.add('active');
+                
+                // Actualizar UI
+                document.getElementById('groupChatTitle').textContent = `👥 ${groupName}`;
+                document.getElementById('groupMessagesList').innerHTML = '';
+                this.loadMessages(groupId);
+            }
+
+            static async loadMessages(groupId) {
+                try {
+                    const messages = await API.getGroupMessages(groupId, 50);
+                    const list = document.getElementById('groupMessagesList');
+                    list.innerHTML = '';
+                    const currentUserId = Auth.getCurrentUserId();
+                    
+                    const sortedMessages = messages.slice().reverse();
+                    sortedMessages.forEach(msg => {
+                        const type = msg.userId === currentUserId ? 'sent' : 'received';
+                        this.displayMessage(msg.username || (type === 'sent' ? 'Tú' : '?'), msg.content, type, msg.timestamp);
+                    });
+                } catch (error) {
+                    console.error('Error cargando mensajes:', error);
+                }
+            }
+
+            static displayMessage(user, content, type, timestamp) {
+                const list = document.getElementById('groupMessagesList');
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message message-${type}`;
+                const time = this.formatTime(timestamp);
+                messageDiv.innerHTML = `
+                    <div class="message-user">${user}</div>
+                    <div class="message-content">${content}</div>
+                    <div class="message-time">${time}</div>
+                `;
+                list.appendChild(messageDiv);
+                
+                setTimeout(() => {
+                    list.scrollTop = list.scrollHeight;
+                }, 10);
+            }
+
+            static formatTime(timestamp) {
+                if (!timestamp) return '';
+                const date = new Date(timestamp);
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${hours}:${minutes}`;
+            }
+
+            static setupEventListeners() {
+                document.getElementById('groupSendBtn').addEventListener('click', () => {
+                    this.sendMessage();
+                });
+
+                document.getElementById('groupMessageInput').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+
+                document.getElementById('searchGroupInput').addEventListener('input', (e) => {
+                    this.searchGroups(e.target.value);
+                });
+
+                document.getElementById('createGroupBtn').addEventListener('click', () => {
+                    this.showCreateGroupModal();
+                });
+            }
+
+            static async sendMessage() {
+                const input = document.getElementById('groupMessageInput');
+                const content = input.value.trim();
+
+                if (!content) {
+                    UI.showError('El mensaje no puede estar vacío');
+                    return;
+                }
+
+                if (!this.currentGroupId) {
+                    UI.showError('Selecciona un grupo primero');
+                    return;
+                }
+
+                try {
+                    await API.sendGroupMessage(this.currentGroupId, content);
+                    input.value = '';
+                } catch (error) {
+                    console.error('Error enviando mensaje:', error);
+                    UI.showError('Error al enviar el mensaje');
+                }
+            }
+
+            static searchGroups(term) {
+                if (!term) {
+                    this.renderGroupsList(this.myGroups);
+                    return;
+                }
+
+                const filtered = this.myGroups.filter(g => 
+                    g.name.toLowerCase().includes(term.toLowerCase())
+                );
+                this.renderGroupsList(filtered);
+            }
+
+            static showCreateGroupModal() {
+                const modal = document.createElement('div');
+                modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;';
+                
+                modal.innerHTML = `
+                    <div style="background: white; padding: 2rem; border-radius: 8px; width: 90%; max-width: 400px;">
+                        <h3>Crear Nuevo Grupo</h3>
+                        <form id="createGroupForm" style="display: flex; flex-direction: column; gap: 1rem;">
+                            <input type="text" id="groupNameInput" placeholder="Nombre del grupo" required style="padding: 0.6rem; border: 1px solid #ddd; border-radius: 6px;">
+                            <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                                <button type="button" class="btn-secondary" onclick="this.closest('div').parentElement.remove()">Cancelar</button>
+                                <button type="submit" class="btn-primary">Crear</button>
+                            </div>
+                        </form>
+                    </div>
+                `;
+
+                const form = modal.querySelector('#createGroupForm');
+                form.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const name = document.getElementById('groupNameInput').value.trim();
+                    if (name) {
+                        try {
+                            await API.createGroup(name);
+                            UI.showSuccess('Grupo creado');
+                            await this.loadMyGroups();
+                            modal.remove();
+                        } catch (error) {
+                            UI.showError('Error al crear grupo');
+                        }
+                    }
+                });
+
+                document.body.appendChild(modal);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            GroupsChat.init();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "skills": {
+    "Recommendation System": {
+      "source": "aj-geddes/useful-ai-prompts",
+      "sourceType": "github",
+      "computedHash": "9e4561e304e2578fe176e08108435e8f74b40f3241541cd28000e5a69b9f86fc"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "516bd2154eb843a8240e43d5b285229129853114ad7075a5e141e1c08e408c84"
+    },
+    "intent-detection": {
+      "source": "louisblythe/salesskills",
+      "sourceType": "github",
+      "computedHash": "1bd861496ef0ecdac62b56732b0ccb0162bec0ac295183ed14c5edf1ea89d4d2"
+    },
+    "qdrant-vector-search": {
+      "source": "davila7/claude-code-templates",
+      "sourceType": "github",
+      "computedHash": "85e1e9fe69ae564e1b87b2bf52876ceb3eabb9e4266ea171f774f55a1e2c3352"
+    },
+    "semantic-search": {
+      "source": "omer-metin/skills-for-antigravity",
+      "sourceType": "github",
+      "computedHash": "8157e3595d59c770d285a88e24ee38c1530b5465e984caebac8c38c026a35c83"
+    }
+  }
+}

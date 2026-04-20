@@ -1,0 +1,27 @@
+@chatapi_HostAddress = http://localhost:5026
+
+GET {{chatapi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
+
+POST {{chatapi_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "phoneNumber": "123456789",
+  "password": "TestPass123"
+}
+
+###
+
+POST {{chatapi_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "login": "testuser",
+  "password": "TestPass123"
+}
+
+###

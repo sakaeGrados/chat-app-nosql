@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App - Chat Privado</title>
+    <link rel="stylesheet" href="../css/styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <button id="toggleSidebar" class="toggle-sidebar-btn" title="Contraer/Expandir">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <h2>Chat App</h2>
+            </div>
+            <ul class="sidebar-menu">
+                <li><a href="home.html" class="menu-item">🏠 Inicio</a></li>
+                <li><a href="global-chat.html" class="menu-item">💬 Chat Global</a></li>
+                <li><a href="private-chat.html" class="menu-item">👥 Chats Privados</a></li>
+                <li><a href="groups.html" class="menu-item">👥 Grupos</a></li>
+                <li><a href="usuarios.html" class="menu-item">👤 Usuarios</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <button id="sidebarUserBtn" class="sidebar-user-btn">
+                    <span id="sidebarUserInitials" class="user-photo">US</span>
+                </button>
+                <div id="sidebarUserDropdown" class="sidebar-user-dropdown">
+                    <a href="#" id="viewProfileLinkSidebar" class="dropdown-option">👤 Ver Perfil</a>
+                    <button id="statusDropdownBtn" class="dropdown-option">
+                        <span id="statusIndicator" class="status-indicator status-online"></span>
+                        <span id="statusText">Conectado</span>
+                    </button>
+                    <button id="logoutBtnSidebar" class="dropdown-option">🚪 Cerrar Sesión</button>
+                </div>
+            </div>
+        </nav>
+        <main class="main-content">
+            <div class="chat-wrapper">
+                <!-- Panel de conversaciones (lado izquierdo) -->
+                <div class="conversations-panel" id="conversationsPanel">
+                    <div class="conversations-header">
+                        <h3>Chats Privados</h3>
+                    </div>
+                    <div class="conversations-search">
+                        <input type="text" id="searchUsers" placeholder="Buscar usuario...">
+                    </div>
+                    <div class="conversations-list" id="conversationsList">
+                        <div class="empty-state">No hay conversaciones aún</div>
+                    </div>
+                </div>
+
+                <!-- Panel de chat (lado derecho) -->
+                <div class="chat-panel" id="chatPanel">
+                    <div class="chat-container">
+                        <div class="chat-header">
+                            <h2 id="chatTitle">Selecciona un chat para comenzar</h2>
+                        </div>
+                        <div id="messagesList" class="messages-list"></div>
+                        <div class="chat-input-area">
+                            <textarea id="messageInput" placeholder="Escribe tu mensaje..." rows="3"></textarea>
+                            <button id="sendBtn" class="btn-primary">Enviar</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/ui.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+    <script src="../js/sidebar.js"></script>
+    <script>
+        class PrivateChat {
+            static connection = null;
+            static currentChatWith = null;
+            static currentChatUsername = null;
+            static conversations = new Map();
+            static allFriends = []; // Guardar lista de amigos
+
+            static async init() {
+                Auth.init();
+                await this.setupSignalR();
+                await this.loadConversations();
+                this.setupEventListeners();
+                SidebarUI.init();
+                
+                // Register this page as a listener for user data refresh
+                window.RefreshUserData = async () => {
+                    console.log('Refetching friends list...');
+                    await this.loadConversations();
+                };
+            }
+
+            static async setupSignalR() {
+                this.connection = new signalR.HubConnectionBuilder()
+                    .withUrl('http://localhost:5026/api/chat', {
+                        accessTokenFactory: () => API.token,
+                        withCredentials: true
+                    })
+                    .withAutomaticReconnect()
+                    .build();
+
+                this.connection.on('ReceivePrivateMessage', (message) => {
+                    // Solo mostrar si es del chat actual y no es nuestro mensaje
+                    const isOwn = message.senderId === Auth.getCurrentUserId();
+                    const isCurrentChat = message.senderId === this.currentChatWith || message.receiverId === this.currentChatWith;
+                    
+                    if (isCurrentChat) {
+                        const type = isOwn ? 'sent' : 'received';
+                        this.displayMessage(message.senderUsername || '?', message.content, type, message.timestamp);
+                    }
+                });
+
+                try {
+                    await this.connection.start();
+                    const userId = Auth.getCurrentUserId();
+                    await this.connection.invoke('RegisterUser', userId);
+                    
+                    // Registrar listener para cambios de estado
+                    SidebarUI.registerStatusChangeListener(this.connection);
+                } catch (err) {
+                    console.error('Error conectando SignalR:', err);
+                    UI.showError('Error conectando en tiempo real');
+                }
+            }
+
+            static async loadConversations() {
+                try {
+                    // Cargar lista de amigos aceptados (sin importar si hay mensajes previos)
+                    let friends = await API.getFriends();
+                    console.log('Amigos cargados:', friends);
+                    if (!friends) friends = [];
+                    this.allFriends = friends; // Guardar para búsquedas
+                    this.renderConversations(friends);
+                } catch (error) {
+                    console.error('Error cargando amigos:', error);
+                    this.renderConversations([]);
+                }
+            }
+
+            static renderConversations(friends) {
+                const list = document.getElementById('conversationsList');
+                
+                if (!friends || friends.length === 0) {
+                    list.innerHTML = '<div class="empty-state">No hay amigos aún. <br><a href="usuarios.html">Agregar amigos</a></div>';
+                    return;
+                }
+
+                // Usar Promise.all para cargar los últimos mensajes de forma asincrónica
+                Promise.all(friends.map(async friend => {
+                    // Get last message for this conversation
+                    let lastMessage = 'Sin mensajes';
+                    try {
+                        const messages = await API.getPrivateMessages(friend.id, 50);
+                        if (messages && messages.length > 0) {
+                            const msg = messages[messages.length - 1]; // Tomar el ÚLTIMO mensaje
+                            const isOwn = msg.userId === Auth.getCurrentUserId();
+                            const prefix = isOwn ? 'Tú: ' : '';
+                            lastMessage = prefix + (msg.content.length > 30 ? msg.content.substring(0, 30) + '...' : msg.content);
+                        }
+                    } catch (error) {
+                        console.error('Error cargando último mensaje:', error);
+                    }
+                    
+                    // Get initials for avatar
+                    const initials = friend.username
+                        .split(' ')
+                        .map(n => n[0])
+                        .join('')
+                        .toUpperCase()
+                        .slice(0, 2);
+                    
+                    // Build photo HTML
+                    let avatarHTML = '';
+                    if (friend.profilePhoto) {
+                        avatarHTML = `<img src="${friend.profilePhoto}" alt="${friend.username}" class="conversation-avatar-img">`;
+                    } else {
+                        avatarHTML = `<span class="conversation-avatar-initials">${initials}</span>`;
+                    }
+                    
+                    return `
+                    <div class="conversation-item ${friend.id === this.currentChatWith ? 'active' : ''}" onclick="PrivateChat.selectConversation('${friend.id}', '${friend.username}')">
+                        <div class="conversation-avatar">
+                            ${avatarHTML}
+                        </div>
+                        <div class="conversation-info">
+                            <div class="conversation-name">${friend.username}</div>
+                            <div class="conversation-status">${lastMessage}</div>
+                        </div>
+                    </div>
+                `;
+                })).then(items => {
+                    list.innerHTML = items.join('');
+                });
+            }
+
+            static getStatusIndicator(status) {
+                if (!status) return '';
+                
+                const statusMap = {
+                    'online': '🟢 Conectado',
+                    'away': '🟡 Ausente',
+                    'dnd': '🔴 No molestar',
+                    'invisible': '⚫ Invisible',
+                    'offline': '⚪ Desconectado'
+                };
+                
+                return statusMap[status] || '';
+            }
+
+            static renderChatHeader(user) {
+                const chatTitle = document.getElementById('chatTitle');
+                
+                // Get initials for avatar
+                const initials = user.username
+                    .split(' ')
+                    .map(n => n[0])
+                    .join('')
+                    .toUpperCase()
+                    .slice(0, 2);
+                
+                // Build photo HTML
+                let photoHTML = '';
+                if (user.profilePhoto) {
+                    photoHTML = `<img src="${user.profilePhoto}" alt="${user.username}" class="chat-header-photo">`;
+                } else {
+                    photoHTML = `<span class="chat-header-initials">${initials}</span>`;
+                }
+                
+                // Get status indicator
+                const statusIndicator = user.status ? this.getStatusIndicator(user.status) : '⚪ Desconectado';
+                
+                chatTitle.innerHTML = `
+                    <div class="chat-header-content">
+                        <div class="chat-header-avatar">
+                            ${photoHTML}
+                        </div>
+                        <div class="chat-header-info">
+                            <div class="chat-header-name">${user.username}</div>
+                            <div class="chat-header-status">${statusIndicator}</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            static async selectConversation(userId, username) {
+                this.currentChatWith = userId;
+                this.currentChatUsername = username;
+                
+                // Marcar como activo en la lista
+                document.querySelectorAll('.conversation-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                event.currentTarget?.classList.add('active');
+                
+                // Cargar detalles del usuario para mostrar en el header
+                try {
+                    const user = await API.getUser(userId);
+                    this.renderChatHeader(user);
+                } catch (error) {
+                    console.error('Error cargando usuario:', error);
+                    // Si hay error, mostrar solo el nombre
+                    this.renderChatHeader({ id: userId, username: username });
+                }
+                
+                // Cargar mensajes
+                document.getElementById('messagesList').innerHTML = '';
+                this.loadMessages(userId);
+            }
+
+            static formatTime(timestamp) {
+                if (!timestamp) return '';
+                const date = new Date(timestamp);
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${hours}:${minutes}`;
+            }
+
+            static async loadMessages(userId) {
+                try {
+                    const messages = await API.getPrivateMessages(userId, 50);
+                    const list = document.getElementById('messagesList');
+                    list.innerHTML = '';
+                    const currentUserId = Auth.getCurrentUserId();
+                    
+                    // Los mensajes vienen ordenados del backend (antiguo a nuevo)
+                    // No es necesario invertir, ya están en el orden correcto
+                    messages.forEach(msg => {
+                        // Comparar userId (del DTO MessageDto) para determinar si es enviado o recibido
+                        const type = msg.userId === currentUserId ? 'sent' : 'received';
+                        this.displayMessage(msg.username || (type === 'sent' ? 'Tú' : '?'), msg.content, type, msg.timestamp);
+                    });
+                } catch (error) {
+                    console.error('Error cargando mensajes:', error);
+                }
+            }
+
+            static displayMessage(user, content, type, timestamp) {
+                const list = document.getElementById('messagesList');
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message message-${type}`;
+                const time = this.formatTime(timestamp);
+                messageDiv.innerHTML = `
+                    <div class="message-user">${user}</div>
+                    <div class="message-content">${content}</div>
+                    <div class="message-time">${time}</div>
+                `;
+                list.appendChild(messageDiv);
+                
+                // Scroll al final con pequeño delay para permitir que el DOM se actualice
+                setTimeout(() => {
+                    list.scrollTop = list.scrollHeight;
+                }, 10);
+            }
+
+            static scrollToBottom() {
+                const list = document.getElementById('messagesList');
+                if (list) {
+                    setTimeout(() => {
+                        list.scrollTop = list.scrollHeight;
+                    }, 10);
+                }
+            }
+
+            static setupEventListeners() {
+                document.getElementById('sendBtn').addEventListener('click', () => {
+                    this.sendMessage();
+                });
+
+                document.getElementById('messageInput').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+
+                document.getElementById('searchUsers').addEventListener('input', (e) => {
+                    this.searchUsers(e.target.value);
+                });
+            }
+
+            static async sendMessage() {
+                const input = document.getElementById('messageInput');
+                const content = input.value.trim();
+
+                if (!content) {
+                    UI.showError('El mensaje no puede estar vacío');
+                    return;
+                }
+
+                if (!this.currentChatWith) {
+                    UI.showError('Selecciona un usuario primero');
+                    return;
+                }
+
+                try {
+                    await API.sendPrivateMessage(this.currentChatWith, content);
+                    input.value = '';
+                    // El mensaje se mostrará cuando llegue por SignalR (ReceivePrivateMessage)
+                } catch (error) {
+                    UI.showError(error.message);
+                }
+            }
+
+            static async searchUsers(query) {
+                if (!query.trim()) {
+                    this.loadConversations();
+                    return;
+                }
+
+                // Buscar solo en los amigos aceptados
+                const filtered = this.allFriends.filter(friend => 
+                    friend.username.toLowerCase().includes(query.toLowerCase())
+                );
+                
+                const list = document.getElementById('conversationsList');
+                if (filtered.length === 0) {
+                    list.innerHTML = '<div class="empty-state">No se encontraron amigos</div>';
+                    return;
+                }
+
+                list.innerHTML = filtered.map(friend => {
+                    // Get initials for avatar
+                    const initials = friend.username
+                        .split(' ')
+                        .map(n => n[0])
+                        .join('')
+                        .toUpperCase()
+                        .slice(0, 2);
+                    
+                    // Build photo HTML
+                    let avatarHTML = '';
+                    if (friend.profilePhoto) {
+                        avatarHTML = `<img src="${friend.profilePhoto}" alt="${friend.username}" class="conversation-avatar-img">`;
+                    } else {
+                        avatarHTML = `<span class="conversation-avatar-initials">${initials}</span>`;
+                    }
+                    
+                    return `
+                    <div class="conversation-item" onclick="PrivateChat.selectConversation('${friend.id}', '${friend.username}')">
+                        <div class="conversation-avatar">
+                            ${avatarHTML}
+                        </div>
+                        <div class="conversation-info">
+                            <div class="conversation-name">${friend.username}</div>
+                            <div class="conversation-status">Disponible</div>
+                        </div>
+                    </div>
+                `}).join('');
+            }
+
+            static async updateConversationList() {
+                await this.loadConversations();
+            }
+
+            static goBack() {
+                document.getElementById('conversationsPanel').style.display = 'block';
+                document.getElementById('chatPanel').style.display = 'none';
+                this.currentChatWith = null;
+            }
+
+            static async destroy() {
+                if (this.connection) {
+                    await this.connection.stop();
+                }
+            }
+        }
+
+        // Inicializar cuando el DOM esté listo
+        document.addEventListener('DOMContentLoaded', () => {
+            PrivateChat.init();
+        });
+
+        // Limpiar al cerrar la página
+        window.addEventListener('beforeunload', () => {
+            PrivateChat.destroy();
+        });
+    </script>
+    <style>
+        .main-content {
+            display: flex;
+            padding: 0;
+            gap: 0;
+        }
+
+        .conversations-panel {
+            width: 300px;
+            background: var(--bg-primary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 0px);
+        }
+
+        .conversations-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-primary);
+        }
+
+        .conversations-header h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+        }
+
+        .conversations-search {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .conversations-search input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 0.875rem;
+            transition: var(--transition);
+        }
+
+        .conversations-search input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        .conversations-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .conversation-item {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            transition: var(--transition);
+        }
+
+        .conversation-item:hover {
+            background: var(--bg-secondary);
+        }
+
+        .conversation-avatar {
+            font-size: 2rem;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-secondary);
+            border-radius: 50%;
+        }
+
+        .conversation-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .conversation-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .conversation-status {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .chat-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .empty-state {
+            padding: 2rem 1rem;
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .empty-state a {
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        .empty-state a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 768px) {
+            .conversations-panel {
+                width: 100%;
+                position: absolute;
+                left: 0;
+                top: 0;
+                z-index: 100;
+            }
+
+            .chat-panel {
+                width: 100%;
+            }
+        }
+    </style>
+</body>
+</html>

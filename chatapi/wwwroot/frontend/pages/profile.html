@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App - Perfil</title>
+    <link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <button id="toggleSidebar" class="toggle-sidebar-btn" title="Contraer/Expandir">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <h2>Chat App</h2>
+            </div>
+            <ul class="sidebar-menu">
+                <li><a href="home.html" class="menu-item">🏠 Inicio</a></li>
+                <li><a href="global-chat.html" class="menu-item">💬 Chat Global</a></li>
+                <li><a href="private-chat.html" class="menu-item">👥 Chats Privados</a></li>
+                <li><a href="groups.html" class="menu-item">👥 Grupos</a></li>
+                <li><a href="usuarios.html" class="menu-item">👤 Usuarios</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <button id="sidebarUserBtn" class="sidebar-user-btn">
+                    <span id="sidebarUserInitials" class="user-photo">US</span>
+                </button>
+                <div id="sidebarUserDropdown" class="sidebar-user-dropdown">
+                    <a href="#" id="viewProfileLinkSidebar" class="dropdown-option">👤 Ver Perfil</a>
+                    <button id="statusDropdownBtn" class="dropdown-option">
+                        <span id="statusIndicator" class="status-indicator status-online"></span>
+                        <span id="statusText">Conectado</span>
+                    </button>
+                    <button id="logoutBtnSidebar" class="dropdown-option">🚪 Cerrar Sesión</button>
+                </div>
+            </div>
+        </nav>
+        <main class="main-content">
+            <div class="profile-container">
+                <div class="profile-header">
+                    <h2>👤 Mi Perfil</h2>
+                    <a href="home.html" class="btn-secondary" style="padding: 10px 20px;">← Volver</a>
+                </div>
+
+                <div class="profile-content">
+                    <!-- Foto de Perfil -->
+                    <div class="profile-section">
+                        <h3>Foto de Perfil</h3>
+                        <div class="avatar-container">
+                            <div class="profile-avatar-large" id="profileAvatarLarge" title="Haz click para cambiar foto">👤</div>
+                            <div class="avatar-overlay" id="avatarOverlay">
+                                <div class="avatar-actions">
+                                    <button class="avatar-action-btn" id="changePhotoBtn">
+                                        <span>📷</span>
+                                        <span>Cambiar</span>
+                                    </button>
+                                    <button class="avatar-action-btn delete" id="deletePhotoBtn">
+                                        <span>🗑️</span>
+                                        <span>Eliminar</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <input type="file" id="profilePhotoInput" accept="image/*" style="display: none;">
+                        </div>
+                        <div id="photoStatus" class="status-message"></div>
+                    </div>
+
+                    <!-- Cambiar Nombre de Usuario -->
+                    <div class="profile-section">
+                        <h3>Nombre de Usuario</h3>
+                        <div class="form-group">
+                            <label for="newUsername">Nuevo Nombre</label>
+                            <input type="text" id="newUsername" placeholder="Nuevo nombre de usuario" minlength="2" maxlength="50">
+                            <button id="updateUsernameBtn" class="btn-primary">Actualizar Nombre</button>
+                        </div>
+                        <div id="usernameStatus" class="status-message"></div>
+                    </div>
+
+                    <!-- Cambiar Contraseña -->
+                    <div class="profile-section">
+                        <h3>Cambiar Contraseña</h3>
+                        <div class="form-group">
+                            <label for="currentPassword">Contraseña Actual</label>
+                            <input type="password" id="currentPassword" placeholder="Tu contraseña actual">
+                        </div>
+                        <div class="form-group">
+                            <label for="newPassword">Nueva Contraseña</label>
+                            <input type="password" id="newPassword" placeholder="Nueva contraseña (mínimo 6 caracteres)" minlength="6">
+                        </div>
+                        <div class="form-group">
+                            <label for="confirmPassword">Confirmar Nueva Contraseña</label>
+                            <input type="password" id="confirmPassword" placeholder="Confirmar nueva contraseña">
+                        </div>
+                        <button id="changePasswordBtn" class="btn-primary">Cambiar Contraseña</button>
+                        <div id="passwordStatus" class="status-message"></div>
+                    </div>
+
+                    <!-- Estado de Usuario -->
+                    <div class="profile-section">
+                        <h3>Estado</h3>
+                        <div class="status-options">
+                            <button class="status-btn" data-status="online">
+                                <span class="status-indicator status-online"></span> Conectado
+                            </button>
+                            <button class="status-btn" data-status="away">
+                                <span class="status-indicator status-away"></span> Ausente
+                            </button>
+                            <button class="status-btn" data-status="dnd">
+                                <span class="status-indicator status-dnd"></span> No Molestar
+                            </button>
+                            <button class="status-btn" data-status="invisible">
+                                <span class="status-indicator status-offline"></span> Invisible
+                            </button>
+                        </div>
+                        <div id="statusUpdateStatus" class="status-message"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/ui.js"></script>
+    <script src="../js/sidebar.js"></script>
+    <script>
+        class ProfilePage {
+            static init() {
+                Auth.init();
+                this.loadProfileData();
+                this.setupEventListeners();
+                SidebarUI.init();
+            }
+
+            static async loadProfileData() {
+                try {
+                    // Load current user profile from API to get latest photo
+                    const userId = Auth.getCurrentUserId();
+                    const response = await API.getUser(userId);
+                    
+                    if (response && response.profilePhoto) {
+                        // Store latest photo from API
+                        localStorage.setItem('userProfilePhoto', response.profilePhoto);
+                        this.updateAvatarUI(response.profilePhoto);
+                    } else {
+                        // Fallback to localStorage if API doesn't have photo
+                        const savedPhoto = localStorage.getItem('userProfilePhoto');
+                        if (savedPhoto) {
+                            this.updateAvatarUI(savedPhoto);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading profile data:', error);
+                    // Fallback to localStorage
+                    const savedPhoto = localStorage.getItem('userProfilePhoto');
+                    if (savedPhoto) {
+                        this.updateAvatarUI(savedPhoto);
+                    }
+                }
+            }
+
+            static setupEventListeners() {
+                // Avatar interactions (hover)
+                const avatar = document.getElementById('profileAvatarLarge');
+                const overlay = document.getElementById('avatarOverlay');
+                
+                if (avatar && overlay) {
+                    avatar.addEventListener('mouseenter', () => {
+                        overlay.classList.add('show');
+                    });
+                    
+                    overlay.addEventListener('mouseleave', () => {
+                        overlay.classList.remove('show');
+                    });
+
+                    // Mobile click to show options
+                    avatar.addEventListener('click', () => {
+                        overlay.classList.toggle('show');
+                    });
+                }
+
+                // Cambiar foto
+                const changePhotoBtn = document.getElementById('changePhotoBtn');
+                if (changePhotoBtn) {
+                    changePhotoBtn.addEventListener('click', () => {
+                        document.getElementById('profilePhotoInput').click();
+                    });
+                }
+
+                // Eliminar foto
+                const deletePhotoBtn = document.getElementById('deletePhotoBtn');
+                if (deletePhotoBtn) {
+                    deletePhotoBtn.addEventListener('click', () => {
+                        this.deleteProfilePhoto();
+                    });
+                }
+
+                // File input change
+                const photoInput = document.getElementById('profilePhotoInput');
+                if (photoInput) {
+                    photoInput.addEventListener('change', (e) => {
+                        this.handlePhotoUpload(e);
+                    });
+                }
+
+                // Cambiar nombre de usuario
+                document.getElementById('updateUsernameBtn').addEventListener('click', () => {
+                    this.updateUsername();
+                });
+
+                // Cambiar contraseña
+                document.getElementById('changePasswordBtn').addEventListener('click', () => {
+                    this.changePassword();
+                });
+
+                // Botones de estado
+                document.querySelectorAll('.status-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const status = e.currentTarget.dataset.status;
+                        this.updateStatus(status);
+                    });
+                });
+
+                // Logout
+                const logoutBtn = document.getElementById('logoutBtnSidebar');
+                if (logoutBtn) {
+                    logoutBtn.addEventListener('click', () => {
+                        Auth.logout();
+                    });
+                }
+            }
+
+            static async handlePhotoUpload(e) {
+                const file = e.target.files[0];
+                const photoStatus = document.getElementById('photoStatus');
+                const overlay = document.getElementById('avatarOverlay');
+
+                if (!file) return;
+
+                // Validar que sea una imagen
+                if (!file.type.startsWith('image/')) {
+                    photoStatus.textContent = '❌ Por favor selecciona una imagen válida (JPG, PNG, WebP, GIF)';
+                    photoStatus.style.color = '#ef4444';
+                    return;
+                }
+
+                // Validar tamaño (máximo 5MB)
+                if (file.size > 5 * 1024 * 1024) {
+                    photoStatus.textContent = '❌ La imagen debe ser menor a 5MB';
+                    photoStatus.style.color = '#ef4444';
+                    return;
+                }
+
+                // Leer la imagen para preview inmediato
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const imageData = event.target.result;
+                    
+                    // Mostrar preview inmediato
+                    this.updateAvatarUI(imageData);
+                    
+                    // Ocultar overlay después de cargar
+                    if (overlay) overlay.classList.remove('show');
+                    
+                    // Mostrar estado de carga
+                    photoStatus.textContent = '⏳ Guardando imagen...';
+                    photoStatus.style.color = '#3b82f6';
+                    
+                    // Guardar en localStorage (backup local)
+                    localStorage.setItem('userProfilePhoto', imageData);
+                    
+                    // Enviar al backend
+                    this.uploadToBackend(file, photoStatus);
+                };
+
+                reader.readAsDataURL(file);
+                
+                // Limpiar el input para permitir seleccionar el mismo archivo nuevamente
+                e.target.value = '';
+            }
+
+            static async uploadToBackend(file, photoStatus) {
+                try {
+                    // Validar que el archivo sea válido
+                    if (!file || !file.type || !file.size) {
+                        throw new Error('El archivo no es válido');
+                    }
+
+                    const result = await API.uploadProfilePhoto(file);
+                    
+                    if (result && result.photoUrl) {
+                        photoStatus.textContent = '✅ Foto de perfil actualizada';
+                        photoStatus.style.color = '#10b981';
+                        
+                        // Refetch user data - this triggers updates in all pages
+                        setTimeout(() => {
+                            API.refetchUserData();
+                        }, 500);
+                        
+                        setTimeout(() => { photoStatus.textContent = ''; }, 3000);
+                    }
+                } catch (error) {
+                    console.error('Error uploading photo:', error);
+                    const errorMsg = error.message || 'Error desconocido';
+                    photoStatus.textContent = '❌ Error al guardar foto: ' + errorMsg;
+                    photoStatus.style.color = '#ef4444';
+                }
+            }
+
+            static updateAvatarUI(imageData) {
+                // Actualizar avatar en perfil
+                const profileAvatar = document.getElementById('profileAvatarLarge');
+                if (profileAvatar) {
+                    profileAvatar.style.backgroundImage = `url('${imageData}')`;
+                    profileAvatar.style.backgroundSize = 'cover';
+                    profileAvatar.style.backgroundPosition = 'center';
+                    profileAvatar.textContent = '';
+                }
+
+                // Actualizar avatar en sidebar usando el método
+                if (typeof SidebarUI !== 'undefined') {
+                    SidebarUI.updateProfilePhoto(imageData);
+                }
+            }
+
+            static async deleteProfilePhoto() {
+                const photoStatus = document.getElementById('photoStatus');
+                const overlay = document.getElementById('avatarOverlay');
+                const username = localStorage.getItem('username') || 'US';
+
+                try {
+                    // Mostrar estado de carga
+                    photoStatus.textContent = '⏳ Eliminando imagen...';
+                    photoStatus.style.color = '#3b82f6';
+
+                    // Llamar al endpoint de delete
+                    await API.deleteProfilePhoto();
+
+                    // Eliminar del localStorage
+                    localStorage.removeItem('userProfilePhoto');
+                    
+                    // Resetear avatar al estado por defecto
+                    const profileAvatar = document.getElementById('profileAvatarLarge');
+                    if (profileAvatar) {
+                        profileAvatar.style.backgroundImage = '';
+                        profileAvatar.style.backgroundSize = '';
+                        profileAvatar.style.backgroundPosition = '';
+                        const initials = this.getInitials(username);
+                        profileAvatar.textContent = initials;
+                    }
+
+                    // Resetear sidebar usando método
+                    if (typeof SidebarUI !== 'undefined') {
+                        SidebarUI.resetProfilePhoto();
+                    }
+
+                    // Ocultar overlay
+                    if (overlay) overlay.classList.remove('show');
+
+                    // Mostrar confirmación
+                    photoStatus.textContent = '✅ Foto de perfil eliminada';
+                    photoStatus.style.color = '#10b981';
+                    
+                    // Refetch user data - this triggers updates in all pages
+                    setTimeout(() => {
+                        API.refetchUserData();
+                    }, 500);
+                    
+                    setTimeout(() => { photoStatus.textContent = ''; }, 3000);
+                } catch (error) {
+                    console.error('Error deleting photo:', error);
+                    photoStatus.textContent = '❌ Error al eliminar foto: ' + error.message;
+                    photoStatus.style.color = '#ef4444';
+                }
+            }
+
+            static getInitials(username) {
+                if (!username) return 'US';
+                const parts = username.trim().split(' ');
+                if (parts.length >= 2) {
+                    return (parts[0][0] + parts[1][0]).toUpperCase();
+                }
+                return username.substring(0, 2).toUpperCase();
+            }
+
+            static async updateUsername() {
+                const newUsername = document.getElementById('newUsername').value.trim();
+                const statusDiv = document.getElementById('usernameStatus');
+
+                if (!newUsername) {
+                    statusDiv.textContent = '❌ Por favor ingresa un nombre de usuario';
+                    statusDiv.style.color = '#ef4444';
+                    return;
+                }
+
+                try {
+                    const response = await fetch('http://localhost:5026/api/users/username', {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${API.token}`
+                        },
+                        body: JSON.stringify({ newUsername })
+                    });
+
+                    if (response.ok) {
+                        statusDiv.textContent = '✅ Nombre de usuario actualizado';
+                        statusDiv.style.color = '#10b981';
+                        localStorage.setItem('username', newUsername);
+                        document.getElementById('newUsername').value = '';
+                        setTimeout(() => { statusDiv.textContent = ''; }, 3000);
+                    } else {
+                        const error = await response.text();
+                        statusDiv.textContent = `❌ ${error}`;
+                        statusDiv.style.color = '#ef4444';
+                    }
+                } catch (error) {
+                    statusDiv.textContent = `❌ Error: ${error.message}`;
+                    statusDiv.style.color = '#ef4444';
+                }
+            }
+
+            static async changePassword() {
+                const currentPassword = document.getElementById('currentPassword').value;
+                const newPassword = document.getElementById('newPassword').value;
+                const confirmPassword = document.getElementById('confirmPassword').value;
+                const statusDiv = document.getElementById('passwordStatus');
+
+                if (!currentPassword || !newPassword || !confirmPassword) {
+                    statusDiv.textContent = '❌ Todos los campos son obligatorios';
+                    statusDiv.style.color = '#ef4444';
+                    return;
+                }
+
+                if (newPassword !== confirmPassword) {
+                    statusDiv.textContent = '❌ Las nuevas contraseñas no coinciden';
+                    statusDiv.style.color = '#ef4444';
+                    return;
+                }
+
+                if (newPassword.length < 6) {
+                    statusDiv.textContent = '❌ La nueva contraseña debe tener al menos 6 caracteres';
+                    statusDiv.style.color = '#ef4444';
+                    return;
+                }
+
+                try {
+                    const response = await fetch('http://localhost:5026/api/users/change-password', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${API.token}`
+                        },
+                        body: JSON.stringify({ currentPassword, newPassword })
+                    });
+
+                    if (response.ok) {
+                        statusDiv.textContent = '✅ Contraseña cambiada correctamente';
+                        statusDiv.style.color = '#10b981';
+                        document.getElementById('currentPassword').value = '';
+                        document.getElementById('newPassword').value = '';
+                        document.getElementById('confirmPassword').value = '';
+                        setTimeout(() => { statusDiv.textContent = ''; }, 3000);
+                    } else {
+                        const error = await response.text();
+                        statusDiv.textContent = `❌ ${error}`;
+                        statusDiv.style.color = '#ef4444';
+                    }
+                } catch (error) {
+                    statusDiv.textContent = `❌ Error: ${error.message}`;
+                    statusDiv.style.color = '#ef4444';
+                }
+            }
+
+            static async updateStatus(status) {
+                const statusDiv = document.getElementById('statusUpdateStatus');
+                try {
+                    const response = await fetch('http://localhost:5026/api/users/status', {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${API.token}`
+                        },
+                        body: JSON.stringify({ status })
+                    });
+
+                    if (response.ok) {
+                        statusDiv.textContent = '✅ Estado actualizado';
+                        statusDiv.style.color = '#10b981';
+                        localStorage.setItem('userStatus', status);
+                        SidebarUI.setUserStatus(status);
+                        setTimeout(() => { statusDiv.textContent = ''; }, 3000);
+                    } else {
+                        statusDiv.textContent = '❌ Error al actualizar estado';
+                        statusDiv.style.color = '#ef4444';
+                    }
+                } catch (error) {
+                    statusDiv.textContent = `❌ Error: ${error.message}`;
+                    statusDiv.style.color = '#ef4444';
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            ProfilePage.init();
+        });
+    </script>
+    <style>
+        .profile-container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .profile-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .profile-header h2 {
+            margin: 0;
+            color: var(--primary-color);
+        }
+
+        .profile-content {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .profile-section {
+            padding: 1.5rem;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius);
+        }
+
+        .profile-avatar-large {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: var(--bg-secondary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 4rem;
+            border: 2px solid var(--primary-color);
+            margin: 0 auto 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background-size: cover;
+            background-position: center;
+            position: relative;
+        }
+
+        .profile-avatar-large:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+
+        .avatar-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+        }
+
+        .avatar-overlay {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+            z-index: 10;
+        }
+
+        .avatar-overlay.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .avatar-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-direction: column;
+        }
+
+        .avatar-action-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.5rem;
+            background: rgba(255, 255, 255, 0.9);
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            color: #1e293b;
+            transition: all 0.2s ease;
+            font-weight: 600;
+        }
+
+        .avatar-action-btn:hover {
+            background: white;
+            transform: scale(1.05);
+        }
+
+        .avatar-action-btn.delete:hover {
+            background: #fef2f2;
+            color: #ef4444;
+        }
+
+        .avatar-action-btn span:first-child {
+            font-size: 1.2rem;
+        }
+
+        .profile-section h3 {
+            margin-top: 0;
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 1rem;
+            font-family: inherit;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .status-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .status-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+            border: 2px solid var(--border-color);
+            border-radius: 6px;
+            background: transparent;
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 0.9rem;
+            color: var(--text-primary);
+        }
+
+        .status-btn:hover {
+            border-color: var(--primary-color);
+            background: var(--bg-secondary);
+        }
+
+        .status-message {
+            min-height: 20px;
+            padding: 0.5rem 0;
+            font-size: 0.9rem;
+        }
+
+        .btn-secondary {
+            background: var(--text-secondary);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: var(--transition);
+            display: inline-block;
+        }
+
+        .btn-secondary:hover {
+            background: var(--text-primary);
+        }
+    </style>
+</body>
+</html>
